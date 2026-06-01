@@ -8,7 +8,8 @@ Discord bot for organizing League flex ranked games with friends.
 - People answer with buttons: `Mukana`, `Ei pääse`, or `Muu aika`
 - `Muu aika` opens a modal where they can suggest another time
 - `/flex-role` stores the role that gets pinged for future polls
-- `/flex-role-get` shows the currently configured ping role
+- `/flex-role-get` gives you the configured ping role
+- `/flex-role-remove` removes the configured ping role from you
 - `/flex-role-create` creates a ping role if it does not exist yet
 - Optional Google Calendar event creation when calendar env vars are set
 

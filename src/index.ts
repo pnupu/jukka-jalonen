@@ -7,6 +7,7 @@ import {
   EmbedBuilder,
   Events,
   GatewayIntentBits,
+  GuildMember,
   MessageFlags,
   ModalBuilder,
   PermissionFlagsBits,
@@ -25,6 +26,7 @@ import type { FlexEvent, FlexResponseStatus } from './types';
 const FLEXII_COMMAND = 'flexii';
 const FLEX_ROLE_COMMAND = 'flex-role';
 const FLEX_ROLE_GET_COMMAND = 'flex-role-get';
+const FLEX_ROLE_REMOVE_COMMAND = 'flex-role-remove';
 const FLEX_ROLE_CREATE_COMMAND = 'flex-role-create';
 const OTHER_TIME_INPUT = 'other_time';
 
@@ -76,7 +78,10 @@ const commands = [
     ),
   new SlashCommandBuilder()
     .setName(FLEX_ROLE_GET_COMMAND)
-    .setDescription('Näytä nykyinen flex-pingien rooli'),
+    .setDescription('Anna flex-pingien rooli itsellesi'),
+  new SlashCommandBuilder()
+    .setName(FLEX_ROLE_REMOVE_COMMAND)
+    .setDescription('Poista flex-pingien rooli itseltäsi'),
   new SlashCommandBuilder()
     .setName(FLEX_ROLE_CREATE_COMMAND)
     .setDescription('Luo ja aseta flex-pingien rooli')
@@ -240,7 +245,7 @@ async function handleSetFlexRole(interaction: ChatInputCommandInteraction) {
 }
 
 async function handleGetFlexRole(interaction: ChatInputCommandInteraction) {
-  if (!interaction.guildId) {
+  if (!interaction.guild || !interaction.guildId) {
     await interaction.reply({
       content: 'Tämä komento toimii vain palvelimella.',
       flags: MessageFlags.Ephemeral,
@@ -248,21 +253,60 @@ async function handleGetFlexRole(interaction: ChatInputCommandInteraction) {
     return;
   }
 
-  const configuredRoleId = store.getGuildConfig(interaction.guildId)?.flexRoleId || process.env.FLEX_ROLE_ID?.trim();
-  if (!configuredRoleId) {
+  const role = await resolveConfiguredFlexRole(interaction);
+  if (!role) return;
+
+  const canManage = await ensureBotCanManageRole(interaction, role);
+  if (!canManage) return;
+
+  const member = await interaction.guild.members.fetch(interaction.user.id);
+  if (member.roles.cache.has(role.id)) {
     await interaction.reply({
-      content: 'Flex-pingien roolia ei ole vielä asetettu. Käytä `/flex-role` tai `/flex-role-create`.',
+      content: `Sinulla on jo flex-rooli: <@&${role.id}>`,
+      flags: MessageFlags.Ephemeral,
+      allowedMentions: { parse: [] },
+    });
+    return;
+  }
+
+  await member.roles.add(role, 'User requested flex ping role');
+
+  await interaction.reply({
+    content: `Lisäsin sinulle flex-roolin: <@&${role.id}>`,
+    flags: MessageFlags.Ephemeral,
+    allowedMentions: { parse: [] },
+  });
+}
+
+async function handleRemoveFlexRole(interaction: ChatInputCommandInteraction) {
+  if (!interaction.guild || !interaction.guildId) {
+    await interaction.reply({
+      content: 'Tämä komento toimii vain palvelimella.',
       flags: MessageFlags.Ephemeral,
     });
     return;
   }
 
-  const role = interaction.guild?.roles.cache.get(configuredRoleId)
-    || await interaction.guild?.roles.fetch(configuredRoleId).catch(() => null);
-  const roleText = role ? `<@&${role.id}>` : `tuntematon rooli (${configuredRoleId})`;
+  const role = await resolveConfiguredFlexRole(interaction);
+  if (!role) return;
+
+  const canManage = await ensureBotCanManageRole(interaction, role);
+  if (!canManage) return;
+
+  const member = await interaction.guild.members.fetch(interaction.user.id);
+  if (!member.roles.cache.has(role.id)) {
+    await interaction.reply({
+      content: `Sinulla ei ole flex-roolia: <@&${role.id}>`,
+      flags: MessageFlags.Ephemeral,
+      allowedMentions: { parse: [] },
+    });
+    return;
+  }
+
+  await member.roles.remove(role, 'User removed flex ping role');
 
   await interaction.reply({
-    content: `Nykyinen flex-pingien rooli: ${roleText}`,
+    content: `Poistin sinulta flex-roolin: <@&${role.id}>`,
     flags: MessageFlags.Ephemeral,
     allowedMentions: { parse: [] },
   });
@@ -297,6 +341,67 @@ async function handleCreateFlexRole(interaction: ChatInputCommandInteraction) {
   });
 
   await interaction.editReply(`Flex-rooli valmis ja asetettu: <@&${role.id}>`);
+}
+
+async function resolveConfiguredFlexRole(interaction: ChatInputCommandInteraction): Promise<Role | null> {
+  const guildId = interaction.guildId;
+  const guild = interaction.guild;
+  if (!guildId || !guild) return null;
+
+  const configuredRoleId = store.getGuildConfig(guildId)?.flexRoleId || process.env.FLEX_ROLE_ID?.trim();
+  if (!configuredRoleId) {
+    await interaction.reply({
+      content: 'Flex-pingien roolia ei ole vielä asetettu. Käytä `/flex-role` tai `/flex-role-create`.',
+      flags: MessageFlags.Ephemeral,
+    });
+    return null;
+  }
+
+  const role = guild.roles.cache.get(configuredRoleId)
+    || await guild.roles.fetch(configuredRoleId).catch(() => null);
+  if (!role) {
+    await interaction.reply({
+      content: `Asetettua flex-roolia ei löydy enää palvelimelta (${configuredRoleId}). Aseta rooli uudelleen komennolla \`/flex-role\`.`,
+      flags: MessageFlags.Ephemeral,
+    });
+    return null;
+  }
+
+  return role;
+}
+
+async function ensureBotCanManageRole(interaction: ChatInputCommandInteraction, role: Role): Promise<boolean> {
+  const botMember = interaction.guild?.members.me || await interaction.guild?.members.fetchMe();
+  if (!botMember) {
+    await interaction.reply({
+      content: 'En löytänyt omaa bot-käyttäjää palvelimelta.',
+      flags: MessageFlags.Ephemeral,
+    });
+    return false;
+  }
+
+  if (!botMember.permissions.has(PermissionFlagsBits.ManageRoles)) {
+    await interaction.reply({
+      content: 'En voi lisätä tai poistaa flex-roolia, koska botilta puuttuu Manage Roles -oikeus.',
+      flags: MessageFlags.Ephemeral,
+    });
+    return false;
+  }
+
+  if (!roleIsManageableBy(botMember, role)) {
+    await interaction.reply({
+      content: `En voi hallita roolia <@&${role.id}>. Siirrä Jukka Jalonen -botin rooli Discordin roolilistassa tämän roolin yläpuolelle.`,
+      flags: MessageFlags.Ephemeral,
+      allowedMentions: { parse: [] },
+    });
+    return false;
+  }
+
+  return true;
+}
+
+function roleIsManageableBy(member: GuildMember, role: Role): boolean {
+  return !role.managed && member.roles.highest.comparePositionTo(role) > 0;
 }
 
 async function handleButton(customId: string, interaction: any) {
@@ -468,6 +573,9 @@ client.on(Events.InteractionCreate, async interaction => {
           return;
         case FLEX_ROLE_GET_COMMAND:
           await handleGetFlexRole(interaction);
+          return;
+        case FLEX_ROLE_REMOVE_COMMAND:
+          await handleRemoveFlexRole(interaction);
           return;
         case FLEX_ROLE_CREATE_COMMAND:
           await handleCreateFlexRole(interaction);
