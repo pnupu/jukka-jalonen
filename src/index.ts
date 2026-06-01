@@ -24,6 +24,7 @@ import type { FlexEvent, FlexResponseStatus } from './types';
 
 const FLEXII_COMMAND = 'flexii';
 const FLEX_ROLE_COMMAND = 'flex-role';
+const FLEX_ROLE_GET_COMMAND = 'flex-role-get';
 const FLEX_ROLE_CREATE_COMMAND = 'flex-role-create';
 const OTHER_TIME_INPUT = 'other_time';
 
@@ -74,6 +75,9 @@ const commands = [
         .setRequired(true)
     ),
   new SlashCommandBuilder()
+    .setName(FLEX_ROLE_GET_COMMAND)
+    .setDescription('Näytä nykyinen flex-pingien rooli'),
+  new SlashCommandBuilder()
     .setName(FLEX_ROLE_CREATE_COMMAND)
     .setDescription('Luo ja aseta flex-pingien rooli')
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
@@ -91,6 +95,7 @@ async function registerCommands() {
     try {
       const guild = await client.guilds.fetch(guildId);
       await guild.commands.set(commands);
+      await clearGlobalCommands();
       console.log(`Registered ${commands.length} commands in guild ${guild.name}`);
       return;
     } catch (error) {
@@ -114,11 +119,20 @@ async function registerCommands() {
       await guild.commands.set(commands);
       console.log(`Registered ${commands.length} commands in guild ${guild.name} (${guild.id})`);
     }
+    await clearGlobalCommands();
     return;
   }
 
   await client.application?.commands.set(commands);
   console.log(`Registered ${commands.length} global commands because no guilds were visible`);
+}
+
+async function clearGlobalCommands() {
+  const globalCommands = await client.application?.commands.fetch();
+  if (!globalCommands || globalCommands.size === 0) return;
+
+  await client.application?.commands.set([]);
+  console.log(`Cleared ${globalCommands.size} stale global commands`);
 }
 
 async function handleFlexii(interaction: ChatInputCommandInteraction) {
@@ -220,6 +234,35 @@ async function handleSetFlexRole(interaction: ChatInputCommandInteraction) {
 
   await interaction.reply({
     content: `Flex-pingien rooli asetettu: <@&${role.id}>`,
+    flags: MessageFlags.Ephemeral,
+    allowedMentions: { parse: [] },
+  });
+}
+
+async function handleGetFlexRole(interaction: ChatInputCommandInteraction) {
+  if (!interaction.guildId) {
+    await interaction.reply({
+      content: 'Tämä komento toimii vain palvelimella.',
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  const configuredRoleId = store.getGuildConfig(interaction.guildId)?.flexRoleId || process.env.FLEX_ROLE_ID?.trim();
+  if (!configuredRoleId) {
+    await interaction.reply({
+      content: 'Flex-pingien roolia ei ole vielä asetettu. Käytä `/flex-role` tai `/flex-role-create`.',
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  const role = interaction.guild?.roles.cache.get(configuredRoleId)
+    || await interaction.guild?.roles.fetch(configuredRoleId).catch(() => null);
+  const roleText = role ? `<@&${role.id}>` : `tuntematon rooli (${configuredRoleId})`;
+
+  await interaction.reply({
+    content: `Nykyinen flex-pingien rooli: ${roleText}`,
     flags: MessageFlags.Ephemeral,
     allowedMentions: { parse: [] },
   });
@@ -422,6 +465,9 @@ client.on(Events.InteractionCreate, async interaction => {
           return;
         case FLEX_ROLE_COMMAND:
           await handleSetFlexRole(interaction);
+          return;
+        case FLEX_ROLE_GET_COMMAND:
+          await handleGetFlexRole(interaction);
           return;
         case FLEX_ROLE_CREATE_COMMAND:
           await handleCreateFlexRole(interaction);
