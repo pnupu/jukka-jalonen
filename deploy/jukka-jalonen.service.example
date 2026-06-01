@@ -1,0 +1,16 @@
+[Unit]
+Description=Jukka Jalonen Discord bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/pi/JukkaJalonen
+EnvironmentFile=/home/pi/JukkaJalonen/.env
+ExecStart=/home/pi/.bun/bin/bun dist/index.js
+Restart=always
+RestartSec=5
+User=pi
+
+[Install]
+WantedBy=multi-user.target
