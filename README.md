@@ -72,6 +72,8 @@ Or point to a credentials file:
 GOOGLE_APPLICATION_CREDENTIALS=/home/pi/jukka-jalonen/google-service-account.json
 ```
 
+Do not put a file path in `GOOGLE_SERVICE_ACCOUNT_JSON`; use `GOOGLE_APPLICATION_CREDENTIALS` for paths.
+
 Then set:
 
 ```env

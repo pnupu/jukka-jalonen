@@ -45,7 +45,12 @@ export async function createCalendarEvent(event: FlexEvent): Promise<string | un
 async function loadCredentials(): Promise<Record<string, unknown> | undefined> {
   const inlineJson = process.env.GOOGLE_SERVICE_ACCOUNT_JSON?.trim();
   if (inlineJson) {
-    return JSON.parse(inlineJson);
+    if (inlineJson.startsWith('{')) {
+      return JSON.parse(inlineJson);
+    }
+
+    console.warn('GOOGLE_SERVICE_ACCOUNT_JSON looks like a file path. Prefer GOOGLE_APPLICATION_CREDENTIALS for credential files.');
+    return JSON.parse(await readFile(inlineJson, 'utf8'));
   }
 
   const path = process.env.GOOGLE_APPLICATION_CREDENTIALS?.trim();
