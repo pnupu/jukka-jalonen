@@ -140,6 +140,30 @@ async function clearGlobalCommands() {
   console.log(`Cleared ${globalCommands.size} stale global commands`);
 }
 
+async function respondEphemeral(
+  interaction: ChatInputCommandInteraction,
+  content: string,
+  allowedMentions?: { parse?: []; roles?: string[] }
+) {
+  const payload = {
+    content,
+    allowedMentions,
+    flags: MessageFlags.Ephemeral as const,
+  };
+
+  if (interaction.deferred) {
+    await interaction.editReply({ content, allowedMentions });
+    return;
+  }
+
+  if (interaction.replied) {
+    await interaction.followUp(payload);
+    return;
+  }
+
+  await interaction.reply(payload);
+}
+
 async function handleFlexii(interaction: ChatInputCommandInteraction) {
   if (!interaction.guildId || !interaction.channel || !interaction.channel.isTextBased()) {
     await interaction.reply({
@@ -148,6 +172,8 @@ async function handleFlexii(interaction: ChatInputCommandInteraction) {
     });
     return;
   }
+
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   const botMember = interaction.guild?.members.me || await interaction.guild?.members.fetchMe();
   const channelPermissions = botMember?.permissionsIn(interaction.channelId);
@@ -158,10 +184,7 @@ async function handleFlexii(interaction: ChatInputCommandInteraction) {
   ].filter(([permission]) => !channelPermissions?.has(permission as bigint));
 
   if (missingPermissions.length > 0) {
-    await interaction.reply({
-      content: `En pysty lähettämään flex-kyselyä tälle kanavalle. Lisää Jukka Jalonen -botille oikeudet: ${missingPermissions.map(([, name]) => name).join(', ')}.`,
-      flags: MessageFlags.Ephemeral,
-    });
+    await interaction.editReply(`En pysty lähettämään flex-kyselyä tälle kanavalle. Lisää Jukka Jalonen -botille oikeudet: ${missingPermissions.map(([, name]) => name).join(', ')}.`);
     return;
   }
 
@@ -173,14 +196,9 @@ async function handleFlexii(interaction: ChatInputCommandInteraction) {
   try {
     startsAt = parseFlexDateTime(dayInput, timeInput);
   } catch (error) {
-    await interaction.reply({
-      content: error instanceof Error ? error.message : 'Ajan tulkinta epäonnistui.',
-      flags: MessageFlags.Ephemeral,
-    });
+    await interaction.editReply(error instanceof Error ? error.message : 'Ajan tulkinta epäonnistui.');
     return;
   }
-
-  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   const eventId = crypto.randomUUID();
   const question = interaction.options.getString('viesti', false)
@@ -230,6 +248,8 @@ async function handleSetFlexRole(interaction: ChatInputCommandInteraction) {
     return;
   }
 
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
   const role = interaction.options.getRole('role', true) as Role;
   await store.setGuildConfig({
     guildId: interaction.guildId,
@@ -237,9 +257,8 @@ async function handleSetFlexRole(interaction: ChatInputCommandInteraction) {
     updatedAt: new Date().toISOString(),
   });
 
-  await interaction.reply({
+  await interaction.editReply({
     content: `Flex-pingien rooli asetettu: <@&${role.id}>`,
-    flags: MessageFlags.Ephemeral,
     allowedMentions: { parse: [] },
   });
 }
@@ -253,6 +272,8 @@ async function handleGetFlexRole(interaction: ChatInputCommandInteraction) {
     return;
   }
 
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
   const role = await resolveConfiguredFlexRole(interaction);
   if (!role) return;
 
@@ -261,9 +282,8 @@ async function handleGetFlexRole(interaction: ChatInputCommandInteraction) {
 
   const member = await interaction.guild.members.fetch(interaction.user.id);
   if (member.roles.cache.has(role.id)) {
-    await interaction.reply({
+    await interaction.editReply({
       content: `Sinulla on jo flex-rooli: <@&${role.id}>`,
-      flags: MessageFlags.Ephemeral,
       allowedMentions: { parse: [] },
     });
     return;
@@ -271,9 +291,8 @@ async function handleGetFlexRole(interaction: ChatInputCommandInteraction) {
 
   await member.roles.add(role, 'User requested flex ping role');
 
-  await interaction.reply({
+  await interaction.editReply({
     content: `Lisäsin sinulle flex-roolin: <@&${role.id}>`,
-    flags: MessageFlags.Ephemeral,
     allowedMentions: { parse: [] },
   });
 }
@@ -287,6 +306,8 @@ async function handleRemoveFlexRole(interaction: ChatInputCommandInteraction) {
     return;
   }
 
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
   const role = await resolveConfiguredFlexRole(interaction);
   if (!role) return;
 
@@ -295,9 +316,8 @@ async function handleRemoveFlexRole(interaction: ChatInputCommandInteraction) {
 
   const member = await interaction.guild.members.fetch(interaction.user.id);
   if (!member.roles.cache.has(role.id)) {
-    await interaction.reply({
+    await interaction.editReply({
       content: `Sinulla ei ole flex-roolia: <@&${role.id}>`,
-      flags: MessageFlags.Ephemeral,
       allowedMentions: { parse: [] },
     });
     return;
@@ -305,9 +325,8 @@ async function handleRemoveFlexRole(interaction: ChatInputCommandInteraction) {
 
   await member.roles.remove(role, 'User removed flex ping role');
 
-  await interaction.reply({
+  await interaction.editReply({
     content: `Poistin sinulta flex-roolin: <@&${role.id}>`,
-    flags: MessageFlags.Ephemeral,
     allowedMentions: { parse: [] },
   });
 }
@@ -350,20 +369,14 @@ async function resolveConfiguredFlexRole(interaction: ChatInputCommandInteractio
 
   const configuredRoleId = store.getGuildConfig(guildId)?.flexRoleId || process.env.FLEX_ROLE_ID?.trim();
   if (!configuredRoleId) {
-    await interaction.reply({
-      content: 'Flex-pingien roolia ei ole vielä asetettu. Käytä `/flex-role` tai `/flex-role-create`.',
-      flags: MessageFlags.Ephemeral,
-    });
+    await respondEphemeral(interaction, 'Flex-pingien roolia ei ole vielä asetettu. Käytä `/flex-role` tai `/flex-role-create`.');
     return null;
   }
 
   const role = guild.roles.cache.get(configuredRoleId)
     || await guild.roles.fetch(configuredRoleId).catch(() => null);
   if (!role) {
-    await interaction.reply({
-      content: `Asetettua flex-roolia ei löydy enää palvelimelta (${configuredRoleId}). Aseta rooli uudelleen komennolla \`/flex-role\`.`,
-      flags: MessageFlags.Ephemeral,
-    });
+    await respondEphemeral(interaction, `Asetettua flex-roolia ei löydy enää palvelimelta (${configuredRoleId}). Aseta rooli uudelleen komennolla \`/flex-role\`.`);
     return null;
   }
 
@@ -373,27 +386,21 @@ async function resolveConfiguredFlexRole(interaction: ChatInputCommandInteractio
 async function ensureBotCanManageRole(interaction: ChatInputCommandInteraction, role: Role): Promise<boolean> {
   const botMember = interaction.guild?.members.me || await interaction.guild?.members.fetchMe();
   if (!botMember) {
-    await interaction.reply({
-      content: 'En löytänyt omaa bot-käyttäjää palvelimelta.',
-      flags: MessageFlags.Ephemeral,
-    });
+    await respondEphemeral(interaction, 'En löytänyt omaa bot-käyttäjää palvelimelta.');
     return false;
   }
 
   if (!botMember.permissions.has(PermissionFlagsBits.ManageRoles)) {
-    await interaction.reply({
-      content: 'En voi lisätä tai poistaa flex-roolia, koska botilta puuttuu Manage Roles -oikeus.',
-      flags: MessageFlags.Ephemeral,
-    });
+    await respondEphemeral(interaction, 'En voi lisätä tai poistaa flex-roolia, koska botilta puuttuu Manage Roles -oikeus.');
     return false;
   }
 
   if (!roleIsManageableBy(botMember, role)) {
-    await interaction.reply({
-      content: `En voi hallita roolia <@&${role.id}>. Siirrä Jukka Jalonen -botin rooli Discordin roolilistassa tämän roolin yläpuolelle.`,
-      flags: MessageFlags.Ephemeral,
-      allowedMentions: { parse: [] },
-    });
+    await respondEphemeral(
+      interaction,
+      `En voi hallita roolia <@&${role.id}>. Siirrä Jukka Jalonen -botin rooli Discordin roolilistassa tämän roolin yläpuolelle.`,
+      { parse: [] }
+    );
     return false;
   }
 
